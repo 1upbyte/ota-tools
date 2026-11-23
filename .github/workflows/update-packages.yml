@@ -1,0 +1,45 @@
+name: Update packages
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: afsr
+            recipe: pkgs/by-name/af/afsr/package.nix
+          - package: custota-tool
+            recipe: pkgs/by-name/cu/custota-tool/package.nix
+    concurrency:
+      group: package-update-${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31
+      - name: Check for new releases
+        run: nix run --inputs-from . nixpkgs#nix-update -- --flake "${{ matrix.package }}"
+      - name: Build and smoke-test changed package
+        run: |
+          if git diff --quiet -- '${{ matrix.recipe }}'; then
+            exit 0
+          fi
+          output=$(nix build --no-link --print-out-paths '.#${{ matrix.package }}')
+          "$output/bin/${{ matrix.package }}" --help
+      - name: Open or refresh update pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: update/${{ matrix.package }}
+          add-paths: ${{ matrix.recipe }}
+          title: '${{ matrix.package }}: update to latest upstream release'
+          commit-message: '${{ matrix.package }}: update to latest upstream release'
+          body: Updated with nix-update. The package built and passed a CLI smoke test on Linux.
