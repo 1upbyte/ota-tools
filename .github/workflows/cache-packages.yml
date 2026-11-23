@@ -1,0 +1,47 @@
+name: Publish Linux builds to Cachix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/cache-packages.yml
+      - flake.nix
+      - flake.lock
+      - pkgs/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    name: Publish ${{ matrix.system }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    env:
+      CACHIX_CACHE_NAME: '1upbyte'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - name: Configure the binary cache
+        run: nix run --inputs-from . nixpkgs#cachix -- use "$CACHIX_CACHE_NAME"
+      - name: Build and smoke-test packages
+        run: |
+          nix build --out-link result-afsr .#packages.${{ matrix.system }}.afsr
+          nix build --out-link result-custota-tool .#packages.${{ matrix.system }}.custota-tool
+          result-afsr/bin/afsr --help
+          result-custota-tool/bin/custota-tool --help
+      - name: Upload package outputs
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: nix run --inputs-from . nixpkgs#cachix -- push "$CACHIX_CACHE_NAME" ./result-afsr ./result-custota-tool
